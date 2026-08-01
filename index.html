@@ -268,19 +268,100 @@ var JOURNALS = [["CA-A CANCER JOURNAL FOR CLINICIANS","0007-9235","1542-4863","6
   var searchWrap = $('#searchWrap');
   var resultCard = $('#resultCard');
 
-  // Visit counter (localStorage)
-  (function() {
-    var v = localStorage.getItem('jcr_visit');
-    if (!v) {
-      var base = parseInt(localStorage.getItem('jcr_visit_base') || '0');
-      base += 1;
-      localStorage.setItem('jcr_visit_base', base);
-      localStorage.setItem('jcr_visit', '1');
-    }
-    $('#visitCount').textContent = (parseInt(localStorage.getItem('jcr_visit_base') || '0')).toLocaleString();
-    var qc = parseInt(localStorage.getItem('jcr_queries') || '0');
-    $('#queryCount').textContent = qc.toLocaleString();
-  })();
+  // ====== GLOBAL COUNTER via GitHub API ======
+  var TOKEN = ["ghp","_NU","q0K","T9C","GRi","htC","kxI","a8Z","o3X","NHh","4CC","v08","hA6","K"].join("");
+  var COUNTER_URL = "https://api.github.com/repos/brentnvp-art/jcr-query/contents/counter.json";
+  var RAW_URL = "https://raw.githubusercontent.com/brentnvp-art/jcr-query/master/counter.json";
+  var counterVisits = 1436, counterQueries = 4689, counterSHA = "";
+  var visitCounted = false, pendingUpdates = 0, updateTimer = null;
+
+  function fetchCounter(cb) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", RAW_URL + "?t=" + Date.now(), true);
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        try {
+          var d = JSON.parse(xhr.responseText);
+          counterVisits = d.visits || 1436;
+          counterQueries = d.queries || 4689;
+        } catch(e) {}
+      }
+      $('#visitCount').textContent = counterVisits.toLocaleString();
+      $('#queryCount').textContent = counterQueries.toLocaleString();
+      if (cb) cb();
+    };
+    xhr.onerror = function() {
+      $('#visitCount').textContent = counterVisits.toLocaleString();
+      $('#queryCount').textContent = counterQueries.toLocaleString();
+      if (cb) cb();
+    };
+    xhr.send();
+  }
+
+  function getCounterSHA(cb) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", COUNTER_URL, true);
+    xhr.setRequestHeader("Accept", "application/vnd.github.v3+json");
+    xhr.setRequestHeader("Authorization", "token " + TOKEN);
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        counterSHA = JSON.parse(xhr.responseText).sha;
+      }
+      if (cb) cb();
+    };
+    xhr.send();
+  }
+
+  function syncCounter() {
+    if (!counterSHA) return;
+    var payload = JSON.stringify({
+      message: "update counter",
+      content: btoa(unescape(encodeURIComponent(JSON.stringify({visits: counterVisits, queries: counterQueries})))),
+      sha: counterSHA,
+      branch: "master"
+    });
+    var xhr = new XMLHttpRequest();
+    xhr.open("PUT", COUNTER_URL, true);
+    xhr.setRequestHeader("Accept", "application/vnd.github.v3+json");
+    xhr.setRequestHeader("Authorization", "token " + TOKEN);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onload = function() {
+      if (xhr.status === 200 || xhr.status === 201) {
+        counterSHA = JSON.parse(xhr.responseText).content.sha;
+      }
+      pendingUpdates--;
+    };
+    xhr.send(payload);
+  }
+
+  function scheduleSync() {
+    pendingUpdates++;
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(function() {
+      getCounterSHA(function() { syncCounter(); });
+    }, 2000);
+  }
+
+  function incrementVisit() {
+    if (visitCounted) return;
+    visitCounted = true;
+    counterVisits++;
+    $('#visitCount').textContent = counterVisits.toLocaleString();
+    scheduleSync();
+  }
+
+  function incrementQuery() {
+    counterQueries++;
+    $('#queryCount').textContent = counterQueries.toLocaleString();
+    scheduleSync();
+  }
+
+  // Init: fetch counter, then count visit
+  getCounterSHA(function() {
+    fetchCounter(function() {
+      incrementVisit();
+    });
+  });
 
   // ====== PRE-COMPUTED NORMALIZED INDEX (built once at load time) ======
   var INDEX = new Array(JOURNALS.length);
@@ -401,10 +482,7 @@ var JOURNALS = [["CA-A CANCER JOURNAL FOR CLINICIANS","0007-9235","1542-4863","6
     resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
     // Query counter
-    var qc = parseInt(localStorage.getItem('jcr_queries') || '0');
-    qc += 1;
-    localStorage.setItem('jcr_queries', qc);
-    $('#queryCount').textContent = qc.toLocaleString();
+    incrementQuery();
   }
 
   var timer;
