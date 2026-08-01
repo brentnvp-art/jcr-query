@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
 <title>JCR 期刊分区查询</title>
 <style>
   :root {
@@ -282,27 +282,41 @@ var JOURNALS = [["CA-A CANCER JOURNAL FOR CLINICIANS","0007-9235","1542-4863","6
     $('#queryCount').textContent = qc.toLocaleString();
   })();
 
+  // ====== PRE-COMPUTED NORMALIZED INDEX (built once at load time) ======
+  var INDEX = new Array(JOURNALS.length);
+  for (var i = 0; i < JOURNALS.length; i++) {
+    INDEX[i] = normalize(JOURNALS[i][FIELD.NAME]) + '|' + normalize(JOURNALS[i][FIELD.CAS_SUBJECT]||'');
+  }
+
   function searchJournals(query) {
-    if (!query) return [];
+    if (!query || query.length < 1) return [];
     var qNorm = normalize(query);
-    // Also try exact ISSN match
     var qRaw = query.trim();
     var results = [];
-    for (var i = 0; i < JOURNALS.length && results.length < 50; i++) {
+    var limit = 50;
+    // Phase 1: exact ISSN match (fast)
+    for (var i = 0; i < JOURNALS.length && results.length < limit; i++) {
       var j = JOURNALS[i];
-      // Exact ISSN match
-      if (j[FIELD.ISSN] && j[FIELD.ISSN] === qRaw) { results.push({ idx: i, journal: j }); continue; }
-      if (j[FIELD.EISSN] && j[FIELD.EISSN] === qRaw) { results.push({ idx: i, journal: j }); continue; }
-      // Fuzzy name match
-      var nameNorm = normalize(j[FIELD.NAME]);
-      if (nameNorm.indexOf(qNorm) !== -1) { results.push({ idx: i, journal: j }); continue; }
-      // ISSN partial match
-      if ((j[FIELD.ISSN]||'').indexOf(qRaw) !== -1 || (j[FIELD.EISSN]||'').indexOf(qRaw) !== -1) {
-        results.push({ idx: i, journal: j }); continue;
+      if ((j[FIELD.ISSN] && j[FIELD.ISSN] === qRaw) || (j[FIELD.EISSN] && j[FIELD.EISSN] === qRaw)) {
+        results.push({ idx: i, journal: j });
       }
-      // CAS subject fuzzy match
-      var casNorm = normalize(j[FIELD.CAS_SUBJECT]||'');
-      if (casNorm && casNorm.indexOf(qNorm) !== -1) { results.push({ idx: i, journal: j }); }
+    }
+    // Phase 2: fuzzy name match using precomputed index
+    for (var i = 0; i < JOURNALS.length && results.length < limit; i++) {
+      if (results.some(function(r) { return r.idx === i; })) continue;
+      if (INDEX[i].indexOf(qNorm) !== -1) {
+        results.push({ idx: i, journal: JOURNALS[i] });
+      }
+    }
+    // Phase 3: ISSN partial match (fallback)
+    if (results.length < limit) {
+      for (var i = 0; i < JOURNALS.length && results.length < limit; i++) {
+        if (results.some(function(r) { return r.idx === i; })) continue;
+        var j = JOURNALS[i];
+        if ((j[FIELD.ISSN]||'').indexOf(qRaw) !== -1 || (j[FIELD.EISSN]||'').indexOf(qRaw) !== -1) {
+          results.push({ idx: i, journal: j });
+        }
+      }
     }
     return results;
   }
@@ -394,7 +408,11 @@ var JOURNALS = [["CA-A CANCER JOURNAL FOR CLINICIANS","0007-9235","1542-4863","6
   }
 
   var timer;
-  searchInput.addEventListener('input', function() {
+  var isComposing = false;
+  searchInput.addEventListener('compositionstart', function() { isComposing = true; });
+  searchInput.addEventListener('compositionend', function(e) {
+    isComposing = false;
+    // Trigger search after composition ends
     var val = this.value.trim();
     searchClear.classList.toggle('visible', val.length > 0);
     clearTimeout(timer);
@@ -402,7 +420,18 @@ var JOURNALS = [["CA-A CANCER JOURNAL FOR CLINICIANS","0007-9235","1542-4863","6
       var results = searchJournals(val);
       renderDropdown(results, val);
       if (!val) resultCard.classList.remove('visible');
-    }, 150);
+    }, 300);
+  });
+  searchInput.addEventListener('input', function() {
+    if (isComposing) return;
+    var val = this.value.trim();
+    searchClear.classList.toggle('visible', val.length > 0);
+    clearTimeout(timer);
+    timer = setTimeout(function() {
+      var results = searchJournals(val);
+      renderDropdown(results, val);
+      if (!val) resultCard.classList.remove('visible');
+    }, 300);
   });
 
   searchClear.addEventListener('click', function() {
